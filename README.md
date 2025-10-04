@@ -1,6 +1,6 @@
 # Welcome to the SuperDataScience Community Project!
 
-Welcome to the **** repository! 🎉
+Welcome to the **NeuroScan: Brain Tumor Detection** repository! 🎉
 
 This project is a collaborative initiative brought to you by SuperDataScience, a global learning community focused on data science, machine learning, and AI. Whether you’re starting with Generative AI or looking to deepen your skills with tool-using LLMs, we’re excited to have you on board!
 
@@ -61,26 +61,16 @@ project-name/
 
 ## 📊 Dataset
 
----
+**Link to dataset:** https://www.kaggle.com/datasets/arwabasal/brain-tumor-mri-detection
 
-## 🌍 APIs & Tools
+## Workflow & Timeline
 
-This project relies on live web data via APIs.  
-- **Search APIs**: [Tavily](https://tavily.com/) or [SerpAPI](https://serpapi.com/)  
-- **LLMs**: OpenAI GPT models (or any provider supporting function/tool calling)  
-- **Deployment**: [Streamlit](https://streamlit.io/) or [Gradio](https://www.gradio.app/)  
+| Phase                     | Core Tasks                                                | Duration      |
+| ------------------------- | --------------------------------------------------------- | ------------- |
+| **1 · Setup + EDA**       | Load dataset, visualize, preprocess, answer EDA questions | **Week 1**    |
+| **2 · Model Development** | Train CNN, evaluate accuracy, tune hyperparameters        | **Weeks 2–3** |
+| **3 · Deployment**        | Build Streamlit app, test locally, deploy to cloud        | **Week 4**    |
 
----
-
-## 🗒️ Project Timeline Overview
-
-| Phase                           | General Activities                                                     |
-| ------------------------------- | ---------------------------------------------------------------------- |
-| **Week 1: Setup + EDA**         | Clean, explore, and visualize the data                                 |
-| **Week 2: Feature Engineering** | Transform features, encode variables, handle imbalance, prepare splits |
-| **Week 3: Model Development**   | Train ML or DL models and evaluate performance                         |
-| **Week 4: Model Optimization**  | Tune models, improve generalization, and interpret results             |
-| **Week 5: Deployment**          | Deploy models via Streamlit or API-based solutions                     |
 
 ---
 
