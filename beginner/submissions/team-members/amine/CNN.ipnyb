@@ -1,0 +1,449 @@
+# Colab-ready script: download/extract dataset, build & train a CNN for brain tumor detection.
+# This file is heavily commented so you can email it or keep it for reference.
+
+########################################
+# CONFIG
+########################################
+# Toggle whether to download the dataset from Kaggle (True) or upload a zip manually (False).
+USE_KAGGLE = True   # set to False if you already uploaded a zip (e.g., archive.zip) to /content
+
+# Kaggle dataset identifier (owner/dataset-name). Used only when USE_KAGGLE == True.
+KAGGLE_DATASET = "arwabasal/brain-tumor-mri-detection"
+
+# If USE_KAGGLE == False, set MANUAL_ZIP_PATH to the zip filename you'll upload into Colab.
+# Example: "/content/archive.zip" if you uploaded archive.zip via the Colab Files panel or files.upload()
+MANUAL_ZIP_PATH = "/content/brain-tumor-mri-detection.zip"
+
+# Where to extract and store the dataset in the Colab VM filesystem.
+DATA_ROOT = "/content/brain_tumor_data"
+
+# Image preprocessing parameters:
+IMG_SIZE = (180, 180)   # resize every image to 180x180 pixels (height, width)
+BATCH_SIZE = 32         # number of images per training batch
+SEED = 1337             # random seed for reproducible train/validation split
+EPOCHS = 25             # maximum number of training epochs
+
+# If True, after training the model will be saved to your Google Drive.
+SAVE_TO_DRIVE = True
+DRIVE_MODEL_PATH = "/content/drive/MyDrive/brain_tumor_model"  # target folder in Drive
+
+########################################
+# ENV SETUP: install packages if missing
+########################################
+# Standard library imports for file operations
+import os, sys
+
+# If we need Kaggle API support (download directly from Kaggle), install kaggle package.
+# The leading '!' runs shell commands in Colab. '-q' silences most pip output.
+if USE_KAGGLE:
+    !pip install -q kaggle
+
+# Ensure TensorFlow is installed/upgraded. Colab already includes TF, but this ensures a recent version.
+!pip install -q --upgrade tensorflow
+
+########################################
+# GPU check (optional) - helpful to confirm hardware acceleration is available
+########################################
+import tensorflow as tf
+print("TensorFlow version:", tf.__version__)                         # print TF version
+print("GPU available:", tf.config.list_physical_devices('GPU'))      # list GPU devices (if any)
+
+########################################
+# GET DATA: choose Kaggle or manual upload path
+########################################
+# Import helpers for zip and file operations
+import zipfile, shutil, pathlib
+
+if USE_KAGGLE:
+    # If using Kaggle, Colab will prompt you to upload kaggle.json (your API token file).
+    from google.colab import files
+    print("Please upload your kaggle.json (Kaggle API token). If you already uploaded it earlier, re-uploading will overwrite it.")
+    uploaded = files.upload()  # this opens a file dialog in Colab for you to choose kaggle.json
+
+    # Save the uploaded kaggle.json to the location expected by the kaggle CLI (~/.kaggle/kaggle.json)
+    os.makedirs("/root/.kaggle", exist_ok=True)  # create folder if not present
+    # Uploaded files are returned as a dict mapping filename -> bytes. We defensively handle str/bytes keys.
+    with open("/root/.kaggle/kaggle.json", "wb") as f:
+        f.write(uploaded.get("kaggle.json") or uploaded.get("kaggle.json".encode(), b""))
+    # Set secure file permissions (owner read/write only) — required by Kaggle
+    os.chmod("/root/.kaggle/kaggle.json", 0o600)
+
+    # Use kaggle CLI to download and unzip the dataset into /content
+    print("Downloading dataset from Kaggle...")
+    # -d <dataset> identifies the dataset, -p sets destination path, --unzip extracts the zip
+    !kaggle datasets download -d {KAGGLE_DATASET} -p /content --unzip
+
+    # After download, datasets can be packaged differently (zip or folder). We try to detect likely folders.
+    possible_dirs = [
+        p for p in os.listdir("/content")
+        if ("brain" in p.lower() or "tumor" in p.lower()) and p != os.path.basename(DATA_ROOT)
+    ]
+
+    # If a zip file with a known name exists, extract into DATA_ROOT.
+    if os.path.exists("/content/brain-tumor-mri-detection.zip") and not os.path.exists(DATA_ROOT):
+        os.makedirs(DATA_ROOT, exist_ok=True)
+        with zipfile.ZipFile("/content/brain-tumor-mri-detection.zip","r") as z:
+            z.extractall(DATA_ROOT)
+    else:
+        # Otherwise, try to move heuristic-matched directories into DATA_ROOT.
+        for d in possible_dirs:
+            p = os.path.join("/content", d)
+            if os.path.isdir(p) and p != DATA_ROOT:
+                if not os.path.exists(DATA_ROOT):
+                    # Move the folder wholesale into DATA_ROOT (rename)
+                    shutil.move(p, DATA_ROOT)
+                else:
+                    # If DATA_ROOT exists, move folder contents into it
+                    for child in os.listdir(p):
+                        shutil.move(os.path.join(p, child), DATA_ROOT)
+
+    print("Data placed in", DATA_ROOT)
+
+else:
+    # Manual path: prompt user to upload the dataset zip via Colab UI.
+    from google.colab import files
+    print("Please upload the dataset zip now (or set USE_KAGGLE=True and provide kaggle.json).")
+    uploaded = files.upload()  # opens file picker; user selects the zip
+
+    # Find the first uploaded filename and set MANUAL_ZIP_PATH accordingly
+    uploaded_fname = list(uploaded.keys())[0]
+    MANUAL_ZIP_PATH = os.path.join("/content", uploaded_fname)
+
+    # Create DATA_ROOT and extract uploaded zip into it
+    os.makedirs(DATA_ROOT, exist_ok=True)
+    with zipfile.ZipFile(MANUAL_ZIP_PATH,"r") as z:
+        z.extractall(DATA_ROOT)
+
+    print("Data extracted to", DATA_ROOT)
+
+########################################
+# Inspect dataset layout - quick checks to help debug structure
+########################################
+# We expect a structure like:
+# DATA_ROOT/
+#   yes/   <- images labeled 'yes' (tumor)
+#   no/    <- images labeled 'no' (no tumor)
+# But some zip layouts are nested; helper functions below find image-containing directories.
+
+def find_image_dirs(root):
+    """
+    Walk 'root' and return a list of directories that contain image files.
+    This helps identify where the .jpg/.png images ended up after extraction.
+    """
+    dirs = []
+    for d, subds, files in os.walk(root):
+        # check if any file in this directory looks like an image
+        if any(f.lower().endswith((".jpg",".png",".jpeg")) for f in files):
+            dirs.append(d)
+    return dirs
+
+# Print top-level entries inside DATA_ROOT to see immediate folder names (e.g., 'yes', 'no', or another folder)
+print("Checking extracted folders under", DATA_ROOT)
+try:
+    for entry in os.listdir(DATA_ROOT):
+        print(" -", entry)
+except FileNotFoundError:
+    print(f"Folder {DATA_ROOT} not found. Check extraction step above.")
+
+print("Image-containing dirs (first few):")
+img_dirs = find_image_dirs(DATA_ROOT)
+print(img_dirs[:10])  # show up to first 10 image folders found
+
+########################################
+# Locate the directory that contains class subfolders (handles nested dataset layouts)
+########################################
+def find_class_parent(root):
+    """
+    Heuristic: find and return the directory whose children are class folders (each child is a folder,
+    and each child folder contains image files). If none found, fallback to root.
+    """
+    # iterate candidates directly under root
+    for candidate in os.listdir(root):
+        candp = os.path.join(root, candidate)
+        if os.path.isdir(candp):
+            # list children inside candidate
+            children = [os.path.join(candp, c) for c in os.listdir(candp)]
+            # check if all children are directories and if any of them contain images
+            if children and all(os.path.isdir(ch) for ch in children):
+                if any(any(f.lower().endswith((".jpg",".png",".jpeg")) for f in os.listdir(ch)) for ch in children):
+                    return candp
+    # fallback: if root itself has subdirectories, assume root is the parent of class folders
+    if any(os.path.isdir(os.path.join(root, c)) for c in os.listdir(root)):
+        return root
+    # final fallback: just return root (even if images are nested deeper)
+    return root
+
+DATA_DIR = find_class_parent(DATA_ROOT)
+print("Using DATA_DIR =", DATA_DIR)  # this will be passed to image_dataset_from_directory
+
+########################################
+# Create tf.data datasets (training and validation)
+########################################
+from tensorflow.keras import layers
+AUTOTUNE = tf.data.AUTOTUNE  # allow tf to choose optimal prefetch buffer size
+
+# Create training dataset by reading images from directory structure.
+# image_dataset_from_directory expects subfolders per class (e.g., DATA_DIR/yes, DATA_DIR/no).
+train_ds = tf.keras.utils.image_dataset_from_directory(
+    DATA_DIR,              # root directory with subfolders for each class
+    labels="inferred",     # infer labels from subfolder names
+    label_mode="binary",   # binary labels: 0 or 1
+    validation_split=0.2,  # reserve 20% of data for validation
+    subset="training",     # this call returns the training subset
+    seed=SEED,             # seed for deterministic split
+    image_size=IMG_SIZE,   # resize images to IMG_SIZE
+    batch_size=BATCH_SIZE
+)
+
+# Create validation dataset using same settings but subset="validation"
+val_ds = tf.keras.utils.image_dataset_from_directory(
+    DATA_DIR,
+    labels="inferred",
+    label_mode="binary",
+    validation_split=0.2,
+    subset="validation",
+    seed=SEED,
+    image_size=IMG_SIZE,
+    batch_size=BATCH_SIZE
+)
+
+# Print some dataset statistics for quick verification
+print("Classes:", train_ds.class_names)  # class names in alphabetical order (maps to label indices)
+print("Train batches:", tf.data.experimental.cardinality(train_ds).numpy())
+print("Val batches:", tf.data.experimental.cardinality(val_ds).numpy())
+
+# Improve performance: cache and prefetch. For train set, shuffle as well.
+train_ds = train_ds.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+
+########################################
+# Data augmentation and normalization
+########################################
+# Simple augmentation pipeline applied at training time to reduce overfitting.
+data_augmentation = tf.keras.Sequential([
+    layers.RandomFlip("horizontal_and_vertical"),  # randomly flip horizontally and vertically
+    layers.RandomRotation(0.08),                   # random rotation up to +/- 0.08 of a full circle
+    layers.RandomZoom(0.08),                       # random zoom in/out
+])
+
+# Normalize pixel values from [0,255] to [0,1]
+normalization_layer = layers.Rescaling(1./255)
+
+########################################
+# Build the CNN model
+########################################
+from tensorflow.keras import Model, Input
+from tensorflow.keras.layers import (
+    Conv2D, MaxPooling2D, Dense, Dropout,
+    BatchNormalization, GlobalAveragePooling2D
+)
+
+def make_model(input_shape=IMG_SIZE + (3,), dropout_rate=0.4):
+    """
+    Constructs a convolutional neural network combining conv-blocks and dense layers.
+    Returns a Keras Model instance.
+    """
+    inputs = Input(shape=input_shape)           # input tensor shape e.g., (180, 180, 3)
+    x = data_augmentation(inputs)               # apply augmentations (active in training)
+    x = normalization_layer(x)                  # scale pixels to [0,1]
+
+    # Convolutional Block 1: conv -> batchnorm -> pool
+    x = Conv2D(32, 3, padding="same", activation="relu")(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling2D()(x)
+
+    # Block 2
+    x = Conv2D(64, 3, padding="same", activation="relu")(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling2D()(x)
+
+    # Block 3
+    x = Conv2D(128, 3, padding="same", activation="relu")(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling2D()(x)
+    x = Dropout(0.25)(x)  # reduce overfitting
+
+    # Block 4
+    x = Conv2D(256, 3, padding="same", activation="relu")(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling2D()(x)
+    x = Dropout(0.25)(x)
+
+    # Global pooling + dense head
+    x = GlobalAveragePooling2D()(x)            # reduces spatial dims to one value per feature map
+    x = Dense(128, activation="relu")(x)       # dense layer
+    x = BatchNormalization()(x)
+    x = Dropout(dropout_rate)(x)               # additional dropout
+    outputs = Dense(1, activation="sigmoid")(x)  # single neuron with sigmoid for binary probability
+
+    model = Model(inputs, outputs)
+    return model
+
+# Instantiate and compile the model
+model = make_model()
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),  # Adam optimizer with LR 0.001
+    loss="binary_crossentropy",                              # binary classification loss
+    metrics=["accuracy", tf.keras.metrics.AUC(name="auc")]   # track accuracy and AUC
+)
+model.summary()  # show model architecture and parameter counts
+
+########################################
+# Callbacks: utilities to save best model, stop early, and adjust learning rate
+########################################
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+
+# Save the best model observed on validation AUC to a file
+checkpoint_cb = ModelCheckpoint(
+    "best_brain_tumor_model.h5",
+    save_best_only=True,
+    monitor="val_auc",   # monitor validation AUC
+    mode="max"           # higher is better for AUC
+)
+
+# Stop training early if val_auc doesn't improve for N epochs; restore best weights
+earlystop_cb = EarlyStopping(
+    monitor="val_auc",
+    patience=6,
+    restore_best_weights=True,
+    mode="max"
+)
+
+# Reduce learning rate when validation loss plateaus
+reduce_lr_cb = ReduceLROnPlateau(
+    monitor="val_loss",
+    factor=0.5,   # reduce LR by this factor
+    patience=3,   # wait this many epochs before reducing
+    min_lr=1e-6
+)
+
+########################################
+# Train the model
+########################################
+history = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=EPOCHS,
+    callbacks=[checkpoint_cb, earlystop_cb, reduce_lr_cb]
+)
+
+########################################
+# Optional: save model to Google Drive for persistence
+########################################
+if SAVE_TO_DRIVE:
+    from google.colab import drive
+    # Mount Google Drive (prompts for authorization). force_remount=True avoids duplicate mounts.
+    drive.mount('/content/drive', force_remount=True)
+    os.makedirs(DRIVE_MODEL_PATH, exist_ok=True)  # create target folder if missing
+    model.save(os.path.join(DRIVE_MODEL_PATH, "final_brain_tumor_model.h5"))  # save entire model
+    print("Saved model to", os.path.join(DRIVE_MODEL_PATH, "final_brain_tumor_model.h5"))
+
+########################################
+# Plot training curves for accuracy and loss
+########################################
+import matplotlib.pyplot as plt
+
+# Pull metrics from the history object returned by model.fit
+acc = history.history.get("accuracy", [])
+val_acc = history.history.get("val_accuracy", [])
+loss = history.history.get("loss", [])
+val_loss = history.history.get("val_loss", [])
+
+# Plot accuracy and loss side-by-side
+plt.figure(figsize=(12,4))
+plt.subplot(1,2,1)
+plt.plot(acc, label="train_acc")
+plt.plot(val_acc, label="val_acc")
+plt.legend()
+plt.title("Accuracy")
+
+plt.subplot(1,2,2)
+plt.plot(loss, label="train_loss")
+plt.plot(val_loss, label="val_loss")
+plt.legend()
+plt.title("Loss")
+plt.show()
+
+########################################
+# Evaluation on validation set: confusion matrix and classification report
+########################################
+import numpy as np
+from sklearn.metrics import confusion_matrix, classification_report
+
+# Accumulate true labels and predicted labels over the validation set
+y_true = []
+y_pred = []
+
+# 'val_ds.unbatch()' yields single examples; re-batch to a fixed batch size for prediction
+for batch_images, batch_labels in val_ds.unbatch().batch(64):
+    preds = model.predict(batch_images, verbose=0).flatten()  # predicted probabilities
+    y_pred.extend((preds > 0.5).astype(int).tolist())         # convert to binary labels (threshold 0.5)
+    y_true.extend(batch_labels.numpy().astype(int).tolist())  # true labels
+
+# Convert lists to numpy arrays for sklearn
+y_true = np.array(y_true)
+y_pred = np.array(y_pred)
+
+# Compute confusion matrix and classification report
+cm = confusion_matrix(y_true, y_pred)
+print("Confusion matrix:\n", cm)
+print("\nClassification report:\n", classification_report(y_true, y_pred, target_names=train_ds.class_names))
+
+########################################
+# Visualize a few validation images with predictions
+########################################
+# Build a validation dataset with batch_size=9 to display 9 sample images
+val_examples = tf.keras.utils.image_dataset_from_directory(
+    DATA_DIR,
+    labels="inferred",
+    label_mode="binary",
+    validation_split=0.2,
+    subset="validation",
+    seed=SEED,
+    image_size=IMG_SIZE,
+    batch_size=9
+)
+
+# Take first batch and show images with predicted probability and true label
+for images, labels in val_examples.take(1):
+    preds = model.predict(images).flatten()
+    plt.figure(figsize=(9,9))
+    for i in range(9):
+        plt.subplot(3,3,i+1)
+        # images[i] is a tensor; convert to numpy and cast to uint8 for display
+        plt.imshow(images[i].numpy().astype("uint8"))
+        p = preds[i]
+        gt = int(labels[i].numpy())
+        # Title shows predicted probability, predicted class, and ground truth
+        title = f"pred: {p:.3f} -> {'tumor' if p>0.5 else 'no tumor'}\ntrue: {'tumor' if gt==1 else 'no tumor'}"
+        plt.title(title)
+        plt.axis("off")
+    plt.show()
+
+########################################
+# Quick inference helper: predict single image from a file path
+########################################
+from tensorflow.keras.preprocessing import image
+import numpy as np
+
+def predict_image(path, model_path=None):
+    """
+    Load a single image from `path`, preprocess it and return model prediction (probability).
+    If model_path is provided, load the model from disk; otherwise use the in-memory `model`.
+    """
+    m = model
+    if model_path:
+        m = tf.keras.models.load_model(model_path)  # load a saved model from disk if requested
+
+    # Load the image and resize to IMG_SIZE
+    img = image.load_img(path, target_size=IMG_SIZE)
+    arr = image.img_to_array(img)  # convert to numpy array (H, W, C)
+    arr = arr / 255.0              # normalize to [0,1], consistent with training preprocessing
+    arr = np.expand_dims(arr, 0)   # add batch dimension -> shape (1, H, W, C)
+    p = m.predict(arr)[0][0]       # predicted probability scalar
+    return p
+
+# Example usage (uncomment and set path to a real image in Colab environment):
+# print(predict_image("/content/brain_tumor_data/yes/example1.jpg"))
+
+print("Done. Model training & evaluation complete.")
