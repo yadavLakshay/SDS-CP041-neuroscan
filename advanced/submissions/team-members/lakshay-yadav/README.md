@@ -175,7 +175,7 @@ Week2.ipynb → Preprocessing & Model Development
 
 ## 🌐 UI PREVIEW
 
-![App Screenshot](assets\UI.png)
+![App Screenshot](assets/UI.png)
 
 > The interface allows drag-and-drop MRI upload and displays tumor probability along with model confidence.  
 > Out-of-distribution images are rejected gracefully with an alert message.
