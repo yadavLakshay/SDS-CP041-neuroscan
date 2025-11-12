@@ -20,8 +20,7 @@ This project follows a full MLOps-driven workflow — from **data preprocessing*
 - 🧩 **Fine-tuned EfficientNetB0 Model** — optimized for brain MRI tumor classification  
 - 🧠 **Mahalanobis OOD Detection** — filters out non-MRI or low-quality scans before inference  
 - ⚙️ **Reproducible ML Pipeline** — consistent preprocessing, augmentation, and evaluation pipeline  
-- 🚀 **FastAPI Inference API** — lightweight backend for serving model predictions  
-- 🧪 **Experiment Tracking** — integrated with MLflow for metrics, ROC-AUC, and OOD rejection rate  
+- 🚀 **FastAPI Inference API** — lightweight backend for serving model predictions    
 - 🧱 **Containerized Deployment** — Dockerized build with reproducible dependencies  
 - 🌐 **Render Cloud Hosting** — auto-build, scalable public API endpoint  
 
@@ -61,7 +60,6 @@ SDS-CP041-NEUROSCAN/
 - Integrated an **adaptive Mahalanobis OOD gate** to reject invalid or low-quality MRI scans before inference.  
 - Implemented **data augmentation** for better generalization and reduced overfitting.  
 - Configured model training with **Adam optimizer**, **Binary Cross-Entropy loss**, and monitored **validation AUC** and **F1-score**.  
-- Logged key training metrics and parameters using **MLflow** for experiment tracking and reproducibility.
 
 ### **Phase 3 — Deployment**
 - Converted the trained model into a lightweight `.h5` artifact for production.  
@@ -78,7 +76,6 @@ SDS-CP041-NEUROSCAN/
 |-----------|-------|
 | Deep Learning | TensorFlow · Keras |
 | API & Backend | FastAPI · Uvicorn |
-| Experiment Tracking | MLflow |
 | Image Processing | Pillow · OpenCV |
 | Deployment | Docker · Render Cloud |
 | Model Explainability | Mahalanobis Distance (OOD Detection) |
