@@ -192,7 +192,7 @@ Week2.ipynb → Preprocessing & Model Development
 ## 🧾 LICENSE & CREDITS
 Academic / Demonstration use only.  
 © 2025 · Developed and maintained by **Lakshay Yadav**.  
-🔗 [Connect on LinkedIn](https://www.linkedin.com/in/yadavlakshay)
+🔗 [Connect on LinkedIn](https://www.linkedin.com/in/lakshay-yadav-2624ab25a/)
 
 
 ---
